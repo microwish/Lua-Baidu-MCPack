@@ -1,8 +1,3 @@
-/**
- * Baidu MC Pack extension for Lua
- * @version 0.1
- * @author caoguoliang@baidu.com
- */
 #include <mc_pack.h>
 
 #include <lua.h>
