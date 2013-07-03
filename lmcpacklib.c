@@ -563,10 +563,50 @@ static const struct luaL_Reg mcpack_lib[] = {
 	{ NULL, NULL }
 };
 
+static int settablereadonly(lua_State *L)
+{
+	return luaL_error(L, "Must not update a read-only table");
+}
+
 #define LUA_MCPACKLIBNAME "mcpack"
 
 LUALIB_API int luaopen_mcpack(lua_State *L)
 {
+	//main table for this module
+	lua_newtable(L);
+
+	//metatable for the main table
+	lua_createtable(L, 0, 2);
+
 	luaL_register(L, LUA_MCPACKLIBNAME, mcpack_lib);
+
+	//for mcpack.VERSION table
+	lua_createtable(L, 0, 1);
+
+	lua_createtable(L, 0, 2);
+
+	//mcpack.VERSION.V1 mcpack.VERSION.V2
+	lua_createtable(L, 0, 2);
+	lua_pushliteral(L, MC_PACK_V1);
+	lua_setfield(L, -2, "V1");
+	lua_pushliteral(L, MC_PACK_V2);
+	lua_setfield(L, -2, "V2");
+
+	//set metamethod
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, settablereadonly);
+	lua_setfield(L, -2, "__newindex");
+
+	lua_setmetatable(L, -2);
+
+	//for macpack.VERSION table
+	lua_setfield(L, -2, "VERSION");
+
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, settablereadonly);
+	lua_setfield(L, -2, "__newindex");
+
+	lua_setmetatable(L, -2);
+
 	return 1;
 }
