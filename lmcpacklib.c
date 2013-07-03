@@ -1,3 +1,8 @@
+/**
+ * Baidu MC Pack extension for Lua
+ * @version 0.1
+ * @author microwish@gmail.com
+ */
 #include <mc_pack.h>
 
 #include <lua.h>
@@ -26,8 +31,8 @@ static inline int get_pack_version(const char *ver_str, size_t ver_len)
 }
 
 typedef enum {
-	//TARGET_TYPE_WARNING = -1,
-	//TARGET_TYPE_UNKNOWN = 0,
+	TARGET_TYPE_WARNING = -1,
+	TARGET_TYPE_UNKNOWN = 0,
 	TARGET_TYPE_INT32 = 1,
 	TARGET_TYPE_UINT32 = 2,
 	TARGET_TYPE_INT64 = 3,
@@ -35,20 +40,61 @@ typedef enum {
 	TARGET_TYPE_FLOAT = 5,
 	TARGET_TYPE_DOUBLE = 6,
 	TARGET_TYPE_STR = 8,
-	TARGET_TYPE_RAW = 9//,
+	TARGET_TYPE_RAW = 9,
 	//TARGET_TYPE_ARRAY = 16,
-	//TARGET_TYPE_BOOL = 32,
+	TARGET_TYPE_BOOL = 32,
 	//TARGET_TYPE_NULL = 64,
 	//TARGET_TYPE_OBJECT = 128,
 	//TARGET_TYPE_ISOARR = 256
 } TARGET_TYPE;
+
+static inline TARGET_TYPE extract_type_from_name(const char *orig_name, const char **np)
+{
+	if (!orig_name || !orig_name[0]) {
+		*np = NULL;
+		return TARGET_TYPE_WARNING;
+	}
+
+	//too bad too ugly
+	if (!strncasecmp(orig_name, "(raw)", 5)) {
+		*np = orig_name + 5;
+		return TARGET_TYPE_RAW;
+	} else if (!strncasecmp(orig_name, "(str)", 5)) {
+		*np = orig_name + 5;
+		return TARGET_TYPE_STR;
+	} else if (!strncasecmp(orig_name, "(int32)", 7)) {
+		*np = orig_name + 7;
+		return TARGET_TYPE_INT32;
+	} else if (!strncasecmp(orig_name, "(uint32)", 8)) {
+		*np = orig_name + 8;
+		return TARGET_TYPE_UINT32;
+	} else if (!strncasecmp(orig_name, "(int64)", 7)) {
+		*np = orig_name + 7;
+		return TARGET_TYPE_INT64;
+	} else if (!strncasecmp(orig_name, "(uint64)", 8)) {
+		*np = orig_name + 8;
+		return TARGET_TYPE_UINT64;
+	} else if (!strncasecmp(orig_name, "(float)", 7)) {
+		*np = orig_name + 7;
+		return TARGET_TYPE_FLOAT;
+	} else if (!strncasecmp(orig_name, "(double)", 8)) {
+		*np = orig_name + 8;
+		return TARGET_TYPE_DOUBLE;
+	} else if (!strncasecmp(orig_name, "(bool)", 6)) {
+		*np = orig_name + 6;
+		return TARGET_TYPE_BOOL;
+	} else {
+		*np = orig_name;
+		return TARGET_TYPE_UNKNOWN;
+	}
+}
 
 /**
  * @reference luaconf.h
  * @TODO In Pentium machines, a naive typecast from double to int in C is extremely slow, so any alternative is worth trying
  * @FIXME it's not endian safe
  */
-static TARGET_TYPE guess_number_type(lua_Number d)
+static inline TARGET_TYPE guess_number_type(lua_Number d)
 {
 	if (d >= 0) {
 		unsigned long int uli = (unsigned long)d;
@@ -89,12 +135,14 @@ static TARGET_TYPE guess_number_type(lua_Number d)
  */
 static int fill_pack(lua_State *L, mc_pack_t *ppack, int key_type)
 {
-	char *name = NULL;
+	const char *orig_name = NULL, *name = NULL;
 	const char *s = NULL;
 	size_t l;
 	int rc = MC_PE_SUCCESS;
 	lua_Number n;
+	TARGET_TYPE specified_type = TARGET_TYPE_UNKNOWN;
 
+	//compatible with PHP array
 	switch (key_type) {
 		case 3://LUA_TNUMBER in lua.h
 		case 4://LUA_TSTRING in lua.h
@@ -112,9 +160,12 @@ static int fill_pack(lua_State *L, mc_pack_t *ppack, int key_type)
 		//key
 		switch (key_type) {
 			case 4:
-				name = (char *)lua_tostring(L, -2);
+				orig_name = lua_tostring(L, -2);
+				if ((specified_type = extract_type_from_name(orig_name, &name)) == TARGET_TYPE_WARNING)
+					return MC_PE_BAD_PARAM;
 				break;
 			case 3:
+				specified_type = TARGET_TYPE_UNKNOWN;
 				break;
 		}
 
@@ -123,16 +174,32 @@ static int fill_pack(lua_State *L, mc_pack_t *ppack, int key_type)
 			case LUA_TSTRING:
 				s = lua_tolstring(L, -1, &l);
 				if (memchr(s, '\0', l)) {
-					if ((rc = mc_pack_put_raw(ppack, name, (const void *)s, l)))
-						return rc;
+					if (specified_type == TARGET_TYPE_RAW || specified_type == TARGET_TYPE_UNKNOWN) {
+						if ((rc = mc_pack_put_raw(ppack, name, (const void *)s, l)))
+							return rc;
+					} else {
+						return MC_PE_BAD_TYPE;
+					}
 				} else {
-					if ((rc = mc_pack_put_str(ppack, name, s)))
-						return rc;
+					if (specified_type == TARGET_TYPE_UNKNOWN || specified_type == TARGET_TYPE_STR) {
+						if ((rc = mc_pack_put_str(ppack, name, s)))
+							return rc;
+					} else if (specified_type == TARGET_TYPE_RAW) {
+						if ((rc = mc_pack_put_raw(ppack, name, (const void *)s, l)))
+							return rc;
+					} else {
+						return MC_PE_BAD_TYPE;
+					}
 				}
 				break;
 			case LUA_TNUMBER: {
+				TARGET_TYPE used_type;
 				n = lua_tonumber(L, -1);
-				switch (guess_number_type(n)) {
+				if (specified_type != TARGET_TYPE_UNKNOWN)
+					used_type = specified_type;
+				else
+					used_type = guess_number_type(n);
+				switch (used_type) {
 					case TARGET_TYPE_INT32:
 						if ((rc = mc_pack_put_int32(ppack, name, (mc_int32_t)n)))
 							return rc;
@@ -159,6 +226,12 @@ static int fill_pack(lua_State *L, mc_pack_t *ppack, int key_type)
 					case TARGET_TYPE_FLOAT:
 						if ((rc = mc_pack_put_float(ppack, name, (float)n)))
 							return rc;
+						break;
+					case TARGET_TYPE_BOOL:
+						if ((rc = mc_pack_put_bool(ppack, name, n ? (mc_bool_t)1 : (mc_bool_t)0)))
+							return rc;
+						break;
+					default:
 						break;
 				}
 			}
@@ -349,7 +422,7 @@ static int array2pack(lua_State *L)
 
 #define GEN_TABLE_KEY(pack_type) \
 	do { \
-		switch (pack_type) { \
+		switch ((pack_type)) { \
 			case MC_PT_OBJ: \
 				lua_pushstring(L, (const char *)sub_key); \
 				break; \
