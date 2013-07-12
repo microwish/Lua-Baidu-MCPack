@@ -286,25 +286,14 @@ static int fill_pack(lua_State *L, mc_pack_t *ppack, int key_type)
 
 static int array2pack(lua_State *L)
 {
-	int num_args;
-
-	if ((num_args = lua_gettop(L)) < 1)
-		return luaL_error(L, "arguments required");
-
 	char *pack_buf = NULL, *temp_buf = NULL;
 	int pack_len = MC_PACK_DEFAULT_BYTES,
 		temp_len = pack_len;
 	const char *ver_str = NULL;
 	size_t ver_len = 0;
 
-	//arg#1
-	luaL_checktype(L, 1, LUA_TTABLE);
-	//check other possible args
-	switch (num_args) {
-		case 1:
-			break;
+	switch (lua_gettop(L)) {
 		case 2:
-			//arg#2
 			switch (lua_type(L, 2)) {
 				case LUA_TNUMBER:
 					pack_len = (int)lua_tointeger(L, 2);
@@ -313,24 +302,44 @@ static int array2pack(lua_State *L)
 					ver_str = lua_tolstring(L, 2, &ver_len);
 					break;
 				default:
-					return luaL_error(L, "invalid arg#2");
+					lua_pushboolean(L, 0);
+					lua_pushliteral(L, "arg#2 invalid");
+					return 2;
 			}
-			lua_pop(L, 1);
+			//lua_pop(L, 1);
+		case 1:
+			if (lua_type(L, 1) != LUA_TTABLE) {
+				lua_pushboolean(L, 0);
+				lua_pushliteral(L, "arg#1 invalid");
+				return 2;
+			}
 			break;
 		case 3:
-			//arg#2
-			pack_len = luaL_checkint(L, 2);
-			//arg#3
-			ver_str = luaL_checklstring(L, 3, &ver_len);
-			lua_pop(L, 2);
+			if (lua_type(L, 2) != LUA_TNUMBER) {
+				lua_pushboolean(L, 0);
+				lua_pushliteral(L, "arg#2 invalid");
+				return 2;
+			}
+			pack_len = lua_tointeger(L, 2);
+			if (lua_type(L, 3) != LUA_TSTRING) {
+				lua_pushboolean(L, 0);
+				lua_pushliteral(L, "arg#3 invalid");
+				return 2;
+			}
+			ver_str = lua_tolstring(L, 3, &ver_len);
+			//lua_pop(L, 2);
 			break;
 		default:
-			return luaL_error(L, "too many arguments");
+			lua_pushboolean(L, 0);
+			lua_pushliteral(L, "Too many arguments");
+			return 2;
 	}
-	lua_pop(L, num_args - 1);
 
-	if (pack_len > MC_PACK_MAX_BYTES)
-		return luaL_error(L, "MC Pack size exceeded the max allowed");
+	if (pack_len > MC_PACK_MAX_BYTES) {
+		lua_toboolean(L, 0);
+		lua_pushliteral(L, "MC Pack size exceeded the max allowed");
+		return 2;
+	}
 
 	if (temp_len < MC_PACK_TEMP_BUF_MIN)
 		temp_len = MC_PACK_TEMP_BUF_MIN;
@@ -347,13 +356,17 @@ static int array2pack(lua_State *L)
 			if (!(pack_buf = (char *)malloc((size_t)pack_len))) {
 				if (temp_buf)
 					free(temp_buf);
-				return luaL_error(L, "Cannot allocate %d bytes for pack", pack_len);
+				lua_pushboolean(L, 0);
+				lua_pushfstring(L, "Cannot allocate %d bytes for pack", pack_len);
+				return 2;
 			}
 		}
 		if (!temp_buf) {
 			if (!(temp_buf = (char *)malloc((size_t)temp_len))) {
 				free(pack_buf);
-				return luaL_error(L, "Cannot allocate %d bytes for temp buf", temp_len);
+				lua_pushboolean(L, 0);
+				lua_pushfstring(L, "Cannot allocate %d bytes for temp buf", temp_len);
+				return 2;
 			}
 		}
 
@@ -362,7 +375,9 @@ static int array2pack(lua_State *L)
 		if (MC_PACK_PTR_ERR(ppack) != 0) {
 			free(pack_buf);
 			free(temp_buf);
-			return luaL_error(L, "MC Pack creation failed: %s", mc_pack_perror(MC_PACK_PTR_ERR(ppack)));
+			lua_pushboolean(L, 0);
+			lua_pushfstring(L, "MC Pack creation failed: %s", mc_pack_perror(MC_PACK_PTR_ERR(ppack)));
+			return 2;
 		}
 
 		//TODO:
@@ -394,21 +409,27 @@ static int array2pack(lua_State *L)
 		//free(pack_buf);
 		//free(temp_buf);
 		mc_pack_finish(ppack);
-		return luaL_error(L, "MC Pack returned error: %s", mc_pack_perror(rc));
+		lua_pushboolean(L, 0);
+		lua_pushfstring(L, "MC Pack returned error: %s", mc_pack_perror(rc));
+		return 2;
 	}
 
 	if ((rc = mc_pack_close(ppack))) {
 		//free(pack_buf);
 		//free(temp_buf);
 		mc_pack_finish(ppack);
-		return luaL_error(L, "MC Pack close failed: %s", mc_pack_perror(rc));
+		lua_pushboolean(L, 0);
+		lua_pushfstring(L, "MC Pack close failed: %s", mc_pack_perror(rc));
+		return 2;
 	}
 
 	if ((pack_len = mc_pack_get_size(ppack)) < 0) {
 		//free(pack_buf);
 		//free(temp_buf);
 		mc_pack_finish(ppack);
-		return luaL_error(L, "MC Pack getting size failed");
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "MC Pack getting size failed");
+		return 2;
 	}
 
 	lua_pushlstring(L, (const char *)pack_buf, (size_t)pack_len);
@@ -565,22 +586,29 @@ static int fill_array(lua_State *L, const mc_pack_t *ppack, register int pack_ty
 
 static int pack2array(lua_State *L)
 {
-	if (lua_gettop(L) != 1)
-		return luaL_error(L, "1 argument required");
-
-	luaL_checktype(L, 1, LUA_TSTRING);
+	if (lua_gettop(L) != 1 || lua_type(L, 1) != LUA_TSTRING) {
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "Argument invalid");
+		return 2;
+	}
 
 	char *pack_buf, *temp_buf;
 	size_t pack_len, temp_len;
 
 	pack_buf = (char *)lua_tolstring(L, 1, &pack_len);
-	lua_pop(L, 1);
+	//lua_pop(L, 1);
 
-	if (pack_len > MC_PACK_MAX_BYTES)
-		return luaL_error(L, "MC Pack size exceeded the max allowed");
+	if (pack_len > MC_PACK_MAX_BYTES) {
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "MC Pack size exceeded the max allowed");
+		return 2;
+	}
 
-	if (pack_len < sizeof(int))
-		return luaL_error(L, "MC Pack size too small");
+	if (pack_len < sizeof(int)) {
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "MC Pack size too small");
+		return 2;
+	}
 
 	temp_len = MC_PACK_DEFAULT_BYTES < MC_PACK_TEMP_BUF_MIN ?
 		(MC_PACK_TEMP_BUF_MIN > MC_PACK_MAX_BYTES ? MC_PACK_MAX_BYTES : MC_PACK_TEMP_BUF_MIN) : MC_PACK_DEFAULT_BYTES;
@@ -590,8 +618,11 @@ static int pack2array(lua_State *L)
 
 	temp_buf = NULL;
 	while (1) {
-		if (!temp_buf && !(temp_buf = malloc(temp_len)))
-			return luaL_error(L, "Allocating %u bytes for temp buf failed", temp_len);
+		if (!temp_buf && !(temp_buf = malloc(temp_len))) {
+			lua_pushboolean(L, 0);
+			lua_pushfstring(L, "Allocating %u bytes for temp buf failed", temp_len);
+			return 2;
+		}
 
 		ppack = mc_pack_open_rw(pack_buf, (int)pack_len, temp_buf, (int)temp_len);
 
@@ -605,7 +636,9 @@ static int pack2array(lua_State *L)
 		} else if (rc < MC_PE_SUCCESS) {
 			free(temp_buf);
 			temp_buf = NULL;
-			return luaL_error(L, "MC Pack open_rw failed: %s", mc_pack_perror(rc));
+			lua_pushboolean(L, 0);
+			lua_pushfstring(L, "MC Pack open_rw failed: %s", mc_pack_perror(rc));
+			return 2;
 		}
 
 		rc = fill_array(L, (const mc_pack_t *)ppack, MC_PT_OBJ);
@@ -624,8 +657,11 @@ static int pack2array(lua_State *L)
 		}
 	}
 
-	if (rc < 0)
-		return luaL_error(L, "MC Pack creating array failed");
+	if (rc < 0) {
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "MC Pack creating array failed");
+		return 2;
+	}
 
 	return 1;
 }
